@@ -6,10 +6,11 @@ pdf(width=10, height=10, file="output/plots/dba_dhs_correlation_heatmap.pdf")
 plot(dhs)
 dev.off()
 
-# Count reads for consensus peaks for peaks with at least 4 reads and for peaks that occur in at least 20% of samples
-dhs <- dba.count(dhs, score=DBA_SCORE_RPKM, minOverlap=0.2)
 
-rpkm <- sapply(dhs$peaks, function(x){return( x[,"Score"])})
+dhs <- dba.count(dhs)
+
+
+rpkm <- sapply(dhs$peaks, function(x){return( x[,"RPKM"])})
 x <- dhs$peaks[[1]]
 rownames(rpkm) <- paste0(x[,"Chr"],":", x[,"Start"], "-", x[,"End"])
 colnames(rpkm) <- dhs$samples$SampleID
@@ -20,14 +21,14 @@ x <- dhs$peaks[[1]]
 rownames(counts) <- paste0(x[,"Chr"],":", x[,"Start"], "-", x[,"End"])
 colnames(counts) <- dhs$samples$SampleID
 write.table(counts, file="output/dhs_consensus_counts_raw_counts.tsv", quote=F, sep="\t")
-  
+
 pdf(width=10, height=10, file="output/plots/dba_dhs_counts_correlation_heatmap.pdf")
 plot(dhs)
 dev.off()
 
 
 pdf(width=10, height=10, file="output/plots/dba_dhs_counts_pca.pdf")
-dba.plotPCA(dhs, label=DBA_CONDITION, score="DBA_SCORE_TMM", bLog=T)
+dba.plotPCA(dhs, label=DBA_CONDITION)
 dev.off()
 
 
@@ -46,8 +47,9 @@ dba.plotVolcano(tmp, 2)
 dba.plotVolcano(tmp, 3)
 dev.off()
 
- 
+
 write.table(dhs.t180, sep="\t", quote=F, file="dhs_t30v180_de_peaks.tsv")
+
 
 # Consensus peaks
 library(DiffBind)

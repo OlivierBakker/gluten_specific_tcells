@@ -51,7 +51,7 @@ po/*~
 **/output
 
 # Logs
-*/scripts/
+**/logs/
 
 # PDFs
 *.pdf
