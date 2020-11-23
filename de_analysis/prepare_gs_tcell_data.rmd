@@ -1,0 +1,46 @@
+# Match to adriaans data. Clean input to usable matrix with metadata
+```{r}
+load("~/Documents/data/gs_tcells/gene_expression/count_all_123Samples.Rdata")
+raw.counts <- read.table("data/gsTcell_counttable_t0_t180.txt", sep="\t")
+colnames(raw.counts) <- gsub("\\.", "-",colnames(raw.counts))
+
+ol         <- intersect(colnames(count.all), colnames(raw.counts))
+count.all  <- count.all[,ol]
+raw.counts <- raw.counts[rownames(count.all),ol]
+c          <- cor(count.all, raw.counts)
+diag(c)
+```
+
+# Make annotations [deprecated]
+```{r, eval=F}
+annotation <- t(as.data.frame(strsplit(colnames(count.all), split="\\_\\_")))
+annotation <- cbind(annotation, colnames(count.all))
+
+i <- 1;
+new.ids <- c()
+for(sample in unique(annotation[,2])) {
+  new.ids <- c(new.ids, paste0("GST", i));
+  i <- i+ 1;
+}
+names(new.ids) <- unique(annotation[,2])
+
+annotation <- cbind(new.ids[annotation[,2]], annotation)
+annotation <- cbind(paste0(annotation[,1], "_", annotation[,4]), annotation)
+rownames(annotation) <- NULL
+colnames(annotation) <- c("id", "sample_id", "batch", "old_sample_id", "timepoint", "old_id")
+annotation <- annotation[,c("id", "sample_id", "batch", "timepoint",  "old_sample_id", "old_id")]
+write.table(annotation, file="data/gsTcell_sample_annotations.tsv", col.names = T, row.names = F, quote=F, sep="\t")
+```
+
+# Reformat data. Make new ids
+```{r}
+# Clean colnames
+load("~/Documents/data/gs_tcells/gene_expression/count_all_123Samples.Rdata")
+meta.data <- read.table("data/gsTcell_sample_annotations.tsv", header=T, stringsAsFactors = F, sep="\t")
+
+# Replace colnames in expression matrix
+rownames(meta.data) <- meta.data[,"old_id"]
+colnames(count.all) <- meta.data[colnames(count.all), 1]
+
+write.table(count.all, file="data/gsTcell_raw_rnaseq_counts_all_timepoints.tsv", col.names=NA, row.names=T, quote=F, sep="\t")
+```

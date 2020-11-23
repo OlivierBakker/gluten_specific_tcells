@@ -1,0 +1,28 @@
+```{r}
+  library(ggplot2)
+  
+  ensembl    <- read.table("../../de_analysis/data/ensembl_gene_position_b37_biotype.txt", header=T, sep="\t", stringsAsFactors = F)
+  tfbs       <- read.table("../output/final_output/ponce_top_only_reli_output_merged.tsv", header=T, sep="\t", stringsAsFactors = F)
+  de.leiden  <- read.table("../../de_analysis/output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", header=T, stringsAsFactors = F)
+  
+  de.biopsy <- na.omit(read.table("../data/DEseq_DonatellaBiopsies_21072017.txt", header=T, row.names=1))
+  de.biopsy <- de.biopsy[de.biopsy$padj < 0.05 & abs(de.biopsy$log2FoldChange) > 1,]
+  
+  de.dice   <- read.csv("../data/CD4_STIM.Vs.CD4_NAIVE.csv", row.names=7)
+  de.dice   <- de.dice[de.dice$Adjusted.p.Value < 0.05 & abs(de.dice$Log.2.Fold.Change) > 1,]
+  
+  rownames(ensembl) <- make.names(ensembl$Gene.name, unique=T)
+  ensembl           <- ensembl[rownames(ensembl) %in% tfbs$Label, ]
+  tfbs$HumanGene    <- ensembl[tfbs$Label, 1]
+  tfbs$IsDeLeiden   <- tfbs$HumanGene %in% de.leiden$ensemblId
+  tfbs$IsDeBiopsy   <- tfbs$HumanGene %in% rownames(de.biopsy)
+  tfbs$IsDeDice     <- tfbs$HumanGene %in% rownames(de.dice)
+  
+  
+  write.table(tfbs, file="output/gs_tcell_tf_binding_enrichment_v3.tsv", sep="\t", quote=F)
+#TBX21
+#STAT5A
+#FOS
+```
+
+

@@ -1,0 +1,28 @@
+```{r}
+source("../plotting_functions.r")
+
+de.180 <- read.table("output/dhs_t30v180_de_peaks.tsv")
+de.180$Fold <- -1 * de.180$Fold
+
+boxplot(as.numeric(rpkm["chr19:48971981-48973126",]) ~ factor(samplesheet[colnames(rpkm),]$Condition, levels=c("t0", "t10", "t30", "t180")))
+boxplot(as.numeric(rpkm["chrX:153606655-153608072",]) ~ factor(samplesheet[colnames(rpkm),]$Condition, levels=c("t0", "t10", "t30", "t180")))
+boxplot(as.numeric(rpkm["chr11:67396683-67398366",]) ~ factor(samplesheet[colnames(rpkm),]$Condition, levels=c("t0", "t10", "t30", "t180")))
+
+
+
+de.counts <- data.frame(counts =c(0,0,0,0,0,208),
+                        type=factor(rep(c("up", "down"), 3), levels=c("up", "down")),
+                        test=c("t0vst10", "t0vst10","t10vst30", "t10vst30", "t30vst180", "t30vst180"))
+
+
+pdf(width=4, height=3, file="output/plots/de_dhs_sites.pdf", family = "ArialMT", paper="a4")
+p <- ggplot(de.counts, aes(x=test, y=counts, fill=type)) +
+  geom_bar(position="dodge", stat="identity") +
+  scale_fill_manual(values=c(up="#CA1C20", down="#0671B0")) +
+  xlab("Timepoints") +
+  ylab("count")
+
+theme.plain(p)
+dev.off()
+```
+

@@ -1,0 +1,92 @@
+```{r}
+source("../plotting_functions.r")
+new.cluster <- c(5,4,6,1,3,2)
+#new.cluster <- 1:6
+cols                      <- c("#3BB273", "#6B6174", "#EF6461", "#FABC2A", "#8576B6", "#2274A5")
+
+# Ensembl data, use to get read names
+ensembl                    <- read.table("data/ensembl_gene_position_b37_biotype.txt", sep="\t", header=T, stringsAsFactors = F)
+ensembl                    <- ensembl[!duplicated(ensembl$Gene.stable.ID),]
+rownames(ensembl)          <- ensembl$Gene.stable.ID
+ensembl$geme.length        <- ensembl$Gene.end..bp. - ensembl$Gene.start..bp.
+
+# Clean up the biptypes
+# non-coding = includes 3prime_overlapping_ncrna, antisense, lincRNA, miRNA, processed_transcript, sense_overlapping, sense_intronic, misc_RNA
+# coding = includes protein_coding, pseudogene, IG_C_pseudogene, IG_V_gene
+# r/sn/snoRNAs = blank includes snRNA, rRNA, snoRNA (the last three are clearly defined ncRNAs with specific function, thus not of interest to this class)
+ensembl$Gene.type <- gsub("protein_coding", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("pseudogene", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("polymorphic_coding RNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("processed_coding RNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("Mt_tRNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("IG\\_.*", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("TR\\_.*", "coding RNA", ensembl$Gene.type)
+
+
+ensembl$Gene.type <- gsub("3prime_overlapping_ncrna", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("antisense", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("lincRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("miRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("processed_transcript", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("sense_overlapping", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("sense_intronic", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("misc_RNA", "non-coding RNA", ensembl$Gene.type)
+
+ensembl$Gene.type <- gsub("snoRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("snRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("rRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("Mt_r/sn/snoRNAs", "non-coding RNA", ensembl$Gene.type)
+
+l.all <- read.table("output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", sep="\t", stringsAsFactors=F, header=T)
+
+clusters <- read.table("../de_analysis/output/final_results/cluster_memberships_kmeans_nclust6.tsv", sep="\t", stringsAsFactors = F)
+clusters$V4 <- ensembl[clusters$V1,"Gene.type"]
+
+
+table(clusters$V2, clusters$V4)
+```
+
+
+```{r}
+mat_clus5 <- matrix(c(255,333,812,2596),nrow=2)
+mat_clus4 <- matrix(c(72,537,812,2596),nrow=2)
+mat_clus6 <- matrix(c(124,658,812,2596),nrow=2)
+mat_clus1 <- matrix(c(192,174,812,2596),nrow=2)
+mat_clus3 <- matrix(c(181,821,812,2596),nrow=2)
+mat_clus2 <- matrix(c(89,73,812,2596),nrow=2)
+
+
+tmp1 <- fisher.test(mat_clus1)
+tmp2 <- fisher.test(mat_clus2)
+tmp3 <- fisher.test(mat_clus3)
+tmp4 <- fisher.test(mat_clus4)
+tmp5 <- fisher.test(mat_clus5)
+tmp6 <- fisher.test(mat_clus6)
+```
+
+```{r}
+boxLabels <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5","Cluster 6")
+dat <- data.frame(cluster = 1:length(boxLabels), 
+                  pval = c(tmp1$p.value, tmp2$p.value, tmp3$p.value, tmp4$p.value, tmp5$p.value, tmp6$p.value),
+                  OR = c(tmp1$estimate, tmp2$estimate, tmp3$estimate, tmp4$estimate, tmp5$estimate, tmp6$estimate),
+                  lower=c(tmp1$conf.int[1], tmp2$conf.int[1], tmp3$conf.int[1], tmp4$conf.int[1], tmp5$conf.int[1], tmp6$conf.int[1]),
+                  upper=c(tmp1$conf.int[2], tmp2$conf.int[2], tmp3$conf.int[2], tmp4$conf.int[2], tmp5$conf.int[2], tmp6$conf.int[2]))
+dat$pval  <- -log10(dat$pval)
+dat$OR    <- log2(dat$OR)
+dat$lower <- log2(dat$lower)
+dat$upper <- log2(dat$upper)
+
+pdf(width=4.5, height=5.5, "output/plots/non_coding_rna_enrichment.pdf",  family = "ArialMT", paper="a4")
+p <- ggplot(dat, aes(x = OR, y = boxLabels)) + 
+    geom_vline(aes(xintercept = 0), size = .25, linetype = "dashed") + 
+    geom_errorbar(aes(xmin=lower, xmax=upper), width=0.1) +
+    geom_point(aes(colour = dat$pval), size = 4) +
+    scale_y_discrete(limits = rev(boxLabels)) +
+    scale_colour_continuous("-log10(pval)", low="lightgrey", high = "red") +
+    ylab("") +
+    xlab("log2 Odds ratio") 
+
+theme.plain(p)
+dev.off()
+  ```
+

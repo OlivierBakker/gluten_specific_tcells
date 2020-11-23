@@ -1,0 +1,276 @@
+```{r}
+library(DESeq2)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(cluster)
+library(clValid)
+library(TCseq)
+source("../plotting_functions.r")
+
+de.results                 <- read.table("output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", sep="\t", header=T, stringsAsFactors = F)
+
+# Read meta data
+meta.data                  <- read.table("data/gsTcell_sample_annotations.tsv", header=T, stringsAsFactors = F, sep="\t")
+meta.data$timepoint        <- factor(meta.data$timepoint, levels=c("t0", "t10", "t30", "t180"))
+meta.data$rnaseq_batch     <- as.factor(meta.data$rnaseq_batch)
+meta.data$source           <- as.factor(meta.data$source)
+meta.data$sex              <- as.factor(meta.data$sex)
+rownames(meta.data)        <- meta.data$id
+
+# Raw count data
+raw.counts                 <- read.table("data/gsTcell_raw_rnaseq_counts_all_timepoints.tsv", header=T, row.names = 1)
+
+# Ensembl data, use to get read names
+ensembl                    <- read.table("data/ensembl_gene_position_b37_biotype.txt", sep="\t", header=T, stringsAsFactors = F)
+ensembl                    <- ensembl[!duplicated(ensembl$Gene.stable.ID),]
+rownames(ensembl)          <- ensembl$Gene.stable.ID
+ensembl$gene.length        <- ensembl$Gene.end..bp. - ensembl$Gene.start..bp.
+```
+
+# Filter genes on low counts and split into oslo / leiden as well as removing non DQ2/DQ8 samples
+```{r}
+# Filter genes that appear in at least ...
+filtered.counts        <- raw.counts[rowSums(raw.counts > 1) > 20,]
+
+# Split the samples
+samples.leiden         <- meta.data[meta.data$source=="leiden" & meta.data$include !=F, "id"]
+samples.oslo           <- meta.data[meta.data$source=="oslo" & meta.data$include !=F, "id"]
+
+filtered.counts.leiden <- filtered.counts[, samples.leiden]
+filtered.counts.oslo   <- filtered.counts[, samples.oslo]
+
+# Cleanup the env
+rm(filtered.counts)
+```
+
+# Run DE analysis
+```{r}
+# Leiden samples
+deseq.leiden       <- DESeqDataSetFromMatrix(countData=filtered.counts.leiden,
+                                     colData = meta.data[samples.leiden,],
+                                     design = ~ rnaseq_batch + sex + timepoint)
+deseq.leiden       <- DESeq(deseq.leiden)
+
+leiden.res.t0.t10  <- results(deseq.leiden, contrast=c("timepoint", "t10", "t0"))
+leiden.res.t0.t30  <- results(deseq.leiden, contrast=c("timepoint", "t30", "t0"))
+leiden.res.t0.t180 <- results(deseq.leiden, contrast=c("timepoint", "t180", "t0"))
+```
+
+# Do clustering of genes on timepoint for serveral cluster numbers
+```{r}
+# Normalize the expression data using VST
+gene.expr           <- assay(vst(deseq.leiden))
+rownames(gene.expr) <- rownames(filtered.counts.leiden)
+
+write.table(gene.expr[unique(de.results$ensemblId),], sep="\t", quote=F, file="output/gstcell_vst_normalized_gene_expr_of_degenes.tsv")
+
+# Calculate the means over the samples for each timepoint
+rmeans <- sapply(c("t0", "t10", "t30", "t180"), function(timepoint) {
+  return(rowMeans(gene.expr[,grep(timepoint, colnames(gene.expr))]))
+})
+
+# Standardize the means over the 4 timepoints
+rmeans              <- rmeans[unique(de.results$ensemblId),]
+standardized.rmeans <- t(apply(rmeans, 1, scale))
+d                   <- dist(standardized.rmeans)
+
+# Do the clustering for several K
+for (i in 4:6) {
+  pdf(width=20, height=i*2, file=paste0("output/pattern_gene_sweep_kmeans_nclust_", i, ".pdf"))
+  
+  tclust <- timeclust(rmeans, algo="km", k=i, standardize =T)
+  p      <- timeclustplot.return(tclust, value = paste0("z-score(mean(vst))"), cols = 3)
+  # Standardize the axes and add horizontal lines to 1, 0 and -1
+  p      <- lapply(p, function(a){
+    a   +
+      ylim(c(-1.5, 1.5)) +
+      geom_hline(yintercept=0, col="grey", lty=2) +
+      geom_hline(yintercept=1, col="grey", lty=2) +
+      geom_hline(yintercept=-1, col="grey", lty=2)
+  })
+  grid.arrange(grobs=p, ncol=3)
+
+  # Save the clustering to file
+  df.out <- as.data.frame(tclust@cluster)
+  df.out <- cbind(df.out, ensembl[rownames(df.out),6], ensembl[rownames(df.out),8])
+  write.table(df.out, file=paste0("output/cluster_memberships_kmeans_nclust", i,".tsv"), sep="\t", quote=F, col.names=F)
+
+  dev.off()
+}
+```
+
+# Evaluating ideal cluster number
+This gave varying results, we decided on 6 clusters based on this data and evaluating the clusters manually as well as evaluating the cluster stability to ensure no flipflopping.
+```{r}
+# Code below nabbed from the interwebs
+library(factoextra)
+library(NbClust)
+df <- standardized.rmeans
+
+# Elbow method
+p1 <- fviz_nbclust(df, kmeans, method = "wss") +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+# Silhouette method
+p2 <- fviz_nbclust(df, kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+
+# Gap statistic
+# nboot = 50 to keep the function speedy. 
+# recommended value: nboot= 500 for your analysis.
+# Use verbose = FALSE to hide computing progression.
+set.seed(435547)
+p3 <- fviz_nbclust(df, kmeans, nstart = 25,  method = "gap_stat", nboot = 50)+
+  labs(subtitle = "Gap statistic method")
+
+grid.arrange(grobs=list(p1, p2, p3), ncol=3)
+```
+
+# Stability of Kmeans clustering over 100 runs (in terms of WSS)
+```{r}
+ks <- sapply(2:10, function(k) {
+  nrun <-100
+  outs <-c()
+  for (i in rep(k, nrun)) {
+    #clustering <- timeclust(rmeans, algo="km", k=i, standardize =T)
+    clustering <- kmeans(standardized.rmeans, centers=i, iter.max = 100)
+    #s          <- silhouette(x=clustering$cluster, dist=d)
+    #dunn.idx   <- dunn(distance = as.matrix(d), clusters=clustering@cluster)
+    #outs <- c(outs, mean(s[,"sil_width"]))
+    #outs       <- c(outs, dunn.idx)
+    outs       <- c(outs, clustering$tot.withinss) 
+  }
+  return(outs)
+})
+colnames(ks) <- 2:10
+
+pdf(width=7.5, height = 5, file="output/plots/WSS_clustering.pdf")
+boxplot(ks, ylab="WSS (distance to cluster center) 100 runs", xlab="cluster number", frame.plot=F)
+dev.off()
+
+
+```
+
+# Final cluster plot based on finalized cluster defnitions
+```{r}
+clusters10 <- read.table("output/final_results/cluster_memberships_kmeans_nclust6.tsv", stringsAsFactors = F, header=F, sep="\t")
+
+# Normalize the expression data using VST
+gene.expr           <- assay(vst(deseq.leiden))
+rownames(gene.expr) <- rownames(filtered.counts.leiden)
+
+# Calculate the means over the samples for each timepoint
+rmeans <- sapply(c("t0", "t10", "t30", "t180"), function(timepoint) {
+  return(rowMeans(gene.expr[,grep(timepoint, colnames(gene.expr))]))
+})
+
+# Standardize the means over the 4 timepoints
+rmeans              <- rmeans[unique(de.results$ensemblId),]
+standardized.rmeans <- t(apply(rmeans, 1, scale))
+colnames(standardized.rmeans) <- colnames(rmeans)
+
+# Thanks Aaron :)
+names(clusters10)  <- c("ENSEMBL", "Cluster", "SYMBOL", "Function")
+clusters10$Cluster <- as.character(clusters10$Cluster)
+
+# reassigning cluster number based on discussion with Iris and Olivier
+clusters10$Cluster <- paste(clusters10$Cluster, "A", sep = "")
+clusters10$Cluster <- gsub("4A","1", clusters10$Cluster)
+clusters10$Cluster <- gsub("6A","2", clusters10$Cluster)
+clusters10$Cluster <- gsub("5A","3", clusters10$Cluster)
+clusters10$Cluster <- gsub("2A","4", clusters10$Cluster)
+clusters10$Cluster <- gsub("1A","5", clusters10$Cluster)
+clusters10$Cluster <- gsub("3A","6", clusters10$Cluster)
+           
+samplesize.lookup <- table(clusters10$Cluster)                
+plots <- list()
+
+# old cols c("#EF6461", "#6B6174", "#FABC2A","#8576B6", "#3BB273", "#2274A5")
+scatter.p <- function(data, cluster.nr, cols=c("#3BB273", "#6B6174", "#EF6461", "#FABC2A", "#8576B6", "#2274A5")
+) {
+  df.plot <- data.frame(y=as.numeric(data),
+                        x=factor(sapply(colnames(data), rep, nrow(data)), levels=colnames(data)),
+                        group=rep(1:nrow(data), ncol(data)))
+  
+  p <- ggplot(df.plot, aes(x=x, y=y, group=group)) + 
+    geom_line(color=cols[cluster.nr], alpha=0.5) +
+    ylab("Standardized mean expresion") +
+    xlab("") +
+    ggtitle(paste0("Cluster ", cluster.nr, " N=", samplesize.lookup[cluster.nr]))  +
+      ylim(c(-1.5, 1.5)) +
+      geom_hline(yintercept=0, col="grey", lty=2) +
+      geom_hline(yintercept=1, col="grey", lty=2) +
+      geom_hline(yintercept=-1, col="grey", lty=2)
+    
+  
+  return(theme.plain(p))
+}
+
+for (i in 1:6) {
+  cur.data   <- standardized.rmeans[clusters10[clusters10$Cluster == i, "ENSEMBL"],]
+  plots[[i]] <- scatter.p(cur.data, i)
+}
+
+pdf(width=12, height=5, file="output/plots/leiden_de_genes_patterns.pdf", family = "ArialMT", paper="a4")
+grid.arrange(grobs=plots, ncol=3)
+dev.off()
+
+pdf(width=3, height=17, file="output/plots/leiden_de_genes_patterns_vertical.pdf", family = "ArialMT")
+grid.arrange(grobs=plots, nrow=6)
+dev.off()
+```
+
+
+# Scratchpad of some testing code, everything below is not part of the main analysis
+# Timecourse
+```{r}
+?timecourseTable
+
+padj <- cbind(leiden.res.t0.t10$padj, leiden.res.t0.t30$padj, leiden.res.t0.t180$padj)
+lfc  <- cbind(leiden.res.t0.t10$log2FoldChange, leiden.res.t0.t30$log2FoldChange, leiden.res.t0.t180$log2FoldChange)
+rownames(lfc) <- rownames(filtered.counts.leiden)
+
+# Filter results
+lfc <- lfc[rowSums(padj < 0.05) >= 1,]
+lfc <- na.omit(lfc[rowSums(abs(lfc) > 2) >= 1,])
+#lfc <- lfc[unique(de.results$ensemblId),]
+
+
+bla <- timeclust(lfc, algo="cm", k=8, standardize=T)
+p <- timeclustplot(bla, value = "LFC", cols = 3)
+
+```
+
+```{r}
+
+ks <- sapply(6:6, function(k) {
+  nrun <-100
+  clust.mat <- matrix(rep(0,nrow(rmeans)^2), ncol=nrow(rmeans), nrow=nrow(rmeans))
+  
+  for (i in rep(k, nrun)) {
+    clustering <- timeclust(rmeans, algo="km", k=i, standardize =T)
+    cur.clust  <- as.data.frame(clustering@cluster)
+    cur.mat    <- sapply(cur.clust[,1], function(x){x == cur.clust[,1]})
+  
+    clust.mat <- clust.mat + cur.mat
+  }
+  return(sum(clust.mat == nrun))
+})
+
+plot(ks)
+#k=3 4556165
+#k=5 2220689
+#k=7 916527
+
+d <- as.dist(clust.mat, diag=T)
+c <- hclust(d)
+
+png(width=1500, height=1500, file="output/cluster_stability_k5.png")
+image(clust.mat[c$order, c$order])
+dev.off()
+
+```
+
+

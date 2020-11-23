@@ -45,13 +45,22 @@ docs/
 po/*~
 
 # Data files
-data/*
+**/data
 
 # Output files
-output/*
+**/output
+
+# Logs
+*/scripts/
 
 # PDFs
 *.pdf
 
 # Backup code (old code)
-backup_*
+**/backup*
+
+# R project object
+*.Rproj
+
+# Data for IGV plots
+finemapping_bundle/

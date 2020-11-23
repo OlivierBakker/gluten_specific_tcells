@@ -1,0 +1,469 @@
+```{r}
+library(DESeq2)
+library(data.table)
+
+# Load functions
+source("../plotting_functions.r")
+
+# Read meta data
+meta.data                  <- read.table("data/gsTcell_sample_annotations.tsv", header=T, stringsAsFactors = F, sep="\t")
+meta.data$timepoint        <- factor(meta.data$timepoint, levels=c("t0", "t10", "t30", "t180"))
+meta.data$rnaseq_batch     <- as.factor(meta.data$rnaseq_batch)
+meta.data$source           <- as.factor(meta.data$source)
+meta.data$sex              <- as.factor(meta.data$sex)
+rownames(meta.data)        <- meta.data$id
+
+# Raw count data
+raw.counts                 <- read.table("data/gsTcell_raw_rnaseq_counts_all_timepoints.tsv", header=T, row.names = 1)
+
+# Ensembl data, use to get read names
+ensembl                    <- read.table("data/ensembl_gene_position_b37_biotype.txt", sep="\t", header=T, stringsAsFactors = F)
+ensembl                    <- ensembl[!duplicated(ensembl$Gene.stable.ID),]
+rownames(ensembl)          <- ensembl$Gene.stable.ID
+ensembl$geme.length        <- ensembl$Gene.end..bp. - ensembl$Gene.start..bp.
+
+# Clean up the biptypes
+# non-coding = includes 3prime_overlapping_ncrna, antisense, lincRNA, miRNA, processed_transcript, sense_overlapping, sense_intronic, misc_RNA
+# coding = includes protein_coding, pseudogene, IG_C_pseudogene, IG_V_gene
+# r/sn/snoRNAs = blank includes snRNA, rRNA, snoRNA (the last three are clearly defined ncRNAs with specific function, thus not of interest to this class)
+ensembl$Gene.type <- gsub("protein_coding", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("pseudogene", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("polymorphic_coding RNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("processed_coding RNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("Mt_tRNA", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("IG\\_.*", "coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("TR\\_.*", "coding RNA", ensembl$Gene.type)
+
+
+ensembl$Gene.type <- gsub("3prime_overlapping_ncrna", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("antisense", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("lincRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("miRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("processed_transcript", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("sense_overlapping", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("sense_intronic", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("misc_RNA", "non-coding RNA", ensembl$Gene.type)
+
+ensembl$Gene.type <- gsub("snoRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("snRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("rRNA", "non-coding RNA", ensembl$Gene.type)
+ensembl$Gene.type <- gsub("Mt_r/sn/snoRNAs", "non-coding RNA", ensembl$Gene.type)
+
+# Color definitions
+tricolors         <- c("coding RNA" = "#EC4F4B", "non-coding RNA" ="#2F9486", "r/sn/snoRNAs" = "#9DD945")
+timepoint_colors  <-  c(t0="#0C885C", t10="#CBC012", t30="#501589", t180="#CB4E12")
+```
+
+# Filter genes on low counts and split into oslo / leiden as well as removing non DQ2/DQ8 samples
+```{r}
+par(mfrow=c(1,1))
+# Read depth per sample
+barplot(colSums(raw.counts), main="Read depth per sample", ylab="# Reads")
+
+# Filter genes that appear in at least ...
+filtered.counts <- raw.counts[rowSums(raw.counts > 1) > 20,]
+
+# Split the samples
+samples.leiden         <- meta.data[meta.data$source=="leiden" & meta.data$include !=F, "id"]
+samples.oslo           <- meta.data[meta.data$source=="oslo" & meta.data$include !=F, "id"]
+
+filtered.counts.leiden <- filtered.counts[, samples.leiden]
+filtered.counts.oslo   <- filtered.counts[, samples.oslo]
+
+# Cleanup the env
+#rm(filtered.counts)
+```
+
+# Run DE analysis
+```{r}
+# Leiden samples
+deseq.leiden   <- DESeqDataSetFromMatrix(countData=filtered.counts.leiden,
+                                     colData = meta.data[samples.leiden,],
+                                     design = ~ rnaseq_batch + sex + timepoint)
+deseq.leiden   <- DESeq(deseq.leiden)
+
+leiden.res.t0.t10   <- results(deseq.leiden, contrast=c("timepoint", "t10", "t0"), lfcThreshold = 1)
+leiden.res.t10.t30  <- results(deseq.leiden, contrast=c("timepoint", "t30", "t10"), lfcThreshold = 1)
+leiden.res.t30.t180 <- results(deseq.leiden, contrast=c("timepoint", "t180", "t30"), lfcThreshold = 1)
+leiden.res.t0.t180  <- results(deseq.leiden, contrast=c("timepoint", "t180", "t0"), lfcThreshold = 1)
+
+leiden.res.t0.t10   <- data.frame(gene=rownames(leiden.res.t0.t10), leiden.res.t0.t10)
+leiden.res.t10.t30  <- data.frame(gene=rownames(leiden.res.t10.t30), leiden.res.t10.t30)
+leiden.res.t30.t180 <- data.frame(gene=rownames(leiden.res.t30.t180), leiden.res.t30.t180)
+leiden.res.t0.t180  <- data.frame(gene=rownames(leiden.res.t0.t180), leiden.res.t0.t180)
+
+write.csv(as.data.frame(leiden.res.t0.t10), file="output/leiden_t10_raw.csv", quote=F)
+write.csv(as.data.frame(leiden.res.t10.t30), file="output/leiden_t30_raw.csv", quote=F)
+write.csv(as.data.frame(leiden.res.t30.t180), file="output/leiden_t180_raw.csv", quote=F)
+write.csv(as.data.frame(leiden.res.t0.t180), file="output/leiden_t0t180_raw.csv", quote=F)
+
+# Leiden samples (all same batch, no gender info, so cannot correct for it)
+deseq.oslo   <- DESeqDataSetFromMatrix(countData=filtered.counts.oslo,
+                                     colData = meta.data[samples.oslo,],
+                                     design = ~ timepoint)
+deseq.oslo   <- DESeq(deseq.oslo)
+
+# Replication, set no FC threshold
+oslo.res.t0.t10   <- results(deseq.oslo, contrast=c("timepoint", "t10", "t0"), lfcThreshold = 0)
+oslo.res.t10.t30  <- results(deseq.oslo, contrast=c("timepoint", "t30", "t10"), lfcThreshold = 0)
+oslo.res.t30.t180 <- results(deseq.oslo, contrast=c("timepoint", "t180", "t30"), lfcThreshold = 0)
+
+oslo.res.t0.t10   <- data.frame(gene=rownames(oslo.res.t0.t10), oslo.res.t0.t10)
+oslo.res.t10.t30  <- data.frame(gene=rownames(oslo.res.t10.t30), oslo.res.t10.t30)
+oslo.res.t30.t180 <- data.frame(gene=rownames(oslo.res.t30.t180), oslo.res.t30.t180)
+
+write.csv(as.data.frame(oslo.res.t0.t10), file="output/oslo_t10_raw.csv", quote=F)
+write.csv(as.data.frame(oslo.res.t10.t30), file="output/oslo_t30_raw.csv", quote=F)
+write.csv(as.data.frame(oslo.res.t30.t180), file="output/oslo_t180_raw.csv", quote=F)
+```
+
+# Replication plots
+```{r}
+par(mfrow=c(1,3))
+simple.replication.plot(leiden.res.t0.t10, oslo.res.t0.t10, main="t0 ~ t10")
+simple.replication.plot(leiden.res.t10.t30, oslo.res.t10.t30, main="t10 ~ t30")
+simple.replication.plot(leiden.res.t30.t180, oslo.res.t30.t180, main="t30 ~t180")
+```
+
+# Prepare results table
+```{r}
+# Concat all the results into one table
+l.all <- as.data.frame(rbind(leiden.res.t0.t10, leiden.res.t10.t30,leiden.res.t30.t180))
+l.all <- cbind(l.all, c(rep("t0.t10", nrow(leiden.res.t0.t10)),
+                        rep("t10.t30", nrow(leiden.res.t10.t30)),
+                        rep("t30.t180", nrow(leiden.res.t30.t180))))
+l.all <- na.omit(l.all)
+
+# Filter on FDR and LFC
+l.all <- l.all[l.all$padj < 0.05 & abs(l.all$log2FoldChange) >1,]
+colnames(l.all)[c(1, 8)] <- c("ensemblId", "condition")
+
+# Oslo for replication
+o.all <- as.data.frame(rbind(oslo.res.t0.t10, oslo.res.t10.t30, oslo.res.t30.t180))
+o.all <- cbind(o.all, c(rep("t0.t10", nrow(oslo.res.t0.t10)),
+                        rep("t10.t30", nrow(oslo.res.t10.t30)),
+                        rep("t30.t180", nrow(oslo.res.t30.t180))))
+o.all <- na.omit(o.all)
+o.all <- o.all[o.all$padj < 0.05,]
+colnames(o.all)[c(1,8)] <- c("ensemblId", "condition")
+
+# Determine various levels of concodance
+# Is a leiden hit FDR signif in ANY oslo condition
+l.all$FDRInOslo <- l.all$ensemblId %in% o.all$ensemblId
+
+# Is a leiden hit FDR significant in the SAME condition AND is the effect size direction concordant
+rownames(l.all) <- paste0(l.all$ensemblId, "_", l.all$condition)
+rownames(o.all) <- paste0(o.all$ensemblId, "_", o.all$condition)
+colnames(o.all) <- paste0("o.", colnames(o.all))
+l.all                 <- cbind(l.all, o.all[rownames(l.all),])
+l.all$fullyConcordant <- sign(l.all$log2FoldChange) == sign(l.all$o.log2FoldChange)
+l.all[is.na(l.all$fullyConcordant), "fullyConcordant"] <- F
+
+# Clean matrix, re-order, keep only essential columns
+l.all <- l.all[,c("fullyConcordant", "FDRInOslo", "condition", "ensemblId", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "o.baseMean", "o.log2FoldChange", "o.lfcSE", "o.stat", "o.pvalue", "o.padj")]
+
+# Write the table
+write.table(l.all, "output/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", quote=F, row.names=F, sep="\t")
+
+l.all$condition <- as.character(l.all$condition)
+
+# Write out gene name lists for use in GeneNetwork of the strongest DE genes
+genes.t10 <- l.all[l.all$condition == "t0.t10", "ensemblId"]
+genes.t30 <- l.all[l.all$condition == "t10.t30", "ensemblId"]
+genes.t180 <- l.all[order(abs(l.all$log2FoldChange), decreasing = T),]
+genes.t180 <- genes.t180[genes.t180$fullyConcordant & genes.t180$condition == "t30.t180", ]
+genes.t180 <- genes.t180[1:500, "ensemblId"]
+
+write.table(genes.t10, file="output/t0.t10.genes.txt", quote=F, col.names=F, row.names=F)
+write.table(genes.t30, file="output/t10.t30.genes.txt", quote=F, col.names=F, row.names=F)
+write.table(genes.t180, file="output/t30.t180.genes.txt", quote=F, col.names=F, row.names=F)
+```
+
+# Colored by biotype
+```{r}
+l.all <- read.table("output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", sep="\t", stringsAsFactors=F, header=T)
+
+de.counts <- data.frame(counts=as.numeric(table(l.all$condition, sign(l.all$log2FoldChange), ensembl[as.character(l.all$ensemblId), "Gene.type"])),
+                        Direction=factor(c(rep("down", 3), rep("up", 3)), levels=c("up", "down")),
+                        test=rep(c("t0vst10","t10vst30","t30vst180"), 2),
+                        type=factor(c(rep("coding RNA", 6), rep("non-coding RNA", 6)), levels=c("coding RNA", "non-coding RNA"))
+                        )
+
+pdf(width=5.5, height=3, file="output/plots/de_gene_barplot.pdf", family = "ArialMT", paper="a4")
+p <- ggplot(de.counts, aes(x=interaction(Direction, test), y=counts, fill=type)) +
+  geom_bar(position=position_dodge(), stat="identity") +
+  scale_fill_manual(values=tricolors) +
+  xlab("Timepoints") +
+  ylab("Count") +
+  coord_cartesian(ylim = c(0, 1500)) +
+  annotate("text", x = 1:6, y = -150, label = rep(c("up", "down"), 3)) +
+  annotate("text", c(1.5, 3.5, 5.5), y = - 300, label = c("t0 vs t10", "t10 vs t30", "t30 vs t180")) 
+ 
+p <- theme.plain(p) + theme(plot.margin = unit(c(1, 1, 4, 1), "lines"),
+                       axis.text.x=element_blank(),
+                       axis.title.x = element_blank(),
+                       legend.position = "right")
+p <- ggplot_gtable(ggplot_build(p))
+p$layout$clip[p$layout$name == "panel"] <- "off"
+
+plot(p)
+dev.off()
+```
+
+# PCA plots
+```{r}
+# Leiden
+# Normalize
+norm.count.leiden <- vst(deseq.leiden)
+norm.count.leiden <-assay(vst(deseq.leiden))
+
+# Color by different conditions
+p <- pca.plot.v2(norm.count.leiden, pc1=1, pc2=2, intgroup=c("rnaseq_batch"))
+p <- pca.plot.v2(norm.count.leiden, pc1=1, pc2=2, intgroup=c("sex"))
+p <- pca.plot.v2(norm.count.leiden, pc1=1, pc2=2, intgroup=c("Age_S_category"))
+
+p <- pca.plot.v2(norm.count.leiden, pc1=2, pc2=3, intgroup=c("timepoint"))
+p <- pca.plot.v2(norm.count.leiden, pc1=2, pc2=3, intgroup=c("rnaseq_batch"))
+p <- pca.plot.v2(norm.count.leiden, pc1=2, pc2=3, intgroup=c("sex"))
+p <- pca.plot.v2(norm.count.leiden, pc1=2, pc2=3, intgroup=c("Age_S_category"))
+
+pdf(width=4, height=3, file="output/plots/pca_leiden.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot.v2(norm.count.leiden,
+                  pc1=1, pc2=2,
+                  intgroup=c("timepoint"),
+                  ntop=nrow(norm.count.leiden),
+                  alpha=0.75) + 
+  scale_color_manual(values=timepoint_colors) +
+  labs(color="Timepoint")
+
+theme.plain(p)
+dev.off()
+
+# Olso
+norm.count.olso <- vst(deseq.oslo)
+pdf(width=4, height=3, file="output/plots/pca_oslo.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot.v2(norm.count.olso,
+                  pc1=1, pc2=2,
+                  intgroup=c("timepoint"),
+                  ntop=nrow(norm.count.leiden),
+                  alpha=0.75) + 
+  scale_color_manual(values=timepoint_colors) +
+  labs(color="Timepoint")
+
+theme.plain(p)
+dev.off()
+
+
+# Leiden DE genes only
+genes     <- read.table("output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", header=T, stringsAsFactors = F)[,4]
+
+pca      <- prcomp(t(assay(norm.count.leiden))[,genes])
+
+
+pdf(width=4, height=3, file="output/plots/pca_leiden_de_genes_only.pdf", family = "ArialMT", paper="a4")
+theme.plain(pca.plot(pca,
+                     fill=meta.data[rownames(pca$x), "timepoint"],
+                     size=4,
+                     alpha=0.75)) + 
+  timepoint_colors +
+  labs(color="Timepoint")
+dev.off()
+
+
+# Jointly Normalize
+full   <- DESeqDataSetFromMatrix(countData=filtered.counts[,meta.data$include !=F],
+                                     colData = meta.data[meta.data$include !=F,],
+                                     design = ~ timepoint)
+combined <- t(assay(vst(full)))
+pca      <- prcomp(combined)
+
+
+pdf(width=4, height=3, file="output/plots/pca_leiden+oslo.pdf", family = "ArialMT", paper="a4")
+theme.plain(pca.plot(pca,
+                     fill=meta.data[rownames(pca$x), "timepoint"],
+                     shape=meta.data[rownames(pca$x), "source"],
+                     size=4,
+                     alpha=0.75)) + 
+  scale_color_manual(values=timepoint_colors) +
+  scale_shape_manual(values=c(leiden=20, oslo=18)) +
+  labs(color="Timepoint", shape="Source")
+
+dev.off()
+```
+  
+# PCA of corrected counts
+```{r}
+# Normalize
+normalized.counts <- vst(deseq.leiden)
+
+# Linearaly correct for confounders (not super important, more for fun)
+corrected.counts <- apply(assay(normalized.counts), 1, function(a) {
+  return(residuals(lm(a ~  normalized.counts$sex + normalized.counts$rnaseq_batch)))
+})
+
+pca <- prcomp(corrected.counts[, 1:500])
+pca.plot(pca, fill = normalized.counts$timepoint, size=5 )
+
+d   <- data.frame(PC1 = pca$x[, 1], PC2 = pca$x[,2], group = normalized.counts$timepoint)
+
+ggplot(data = d, aes_string(x = "PC1", y = "PC2", color = "group")) +
+  geom_point(size = 3) + 
+  coord_fixed() + geom_text(aes(label=as.character(normalized.counts$id)), hjust=0,vjust=0) 
+
+```
+
+# Compare with previous results
+```{r}
+old.results <- read.table("data/PatternGenes_OsloLeiden_28022018.txt", header=T, row.names = 1, stringsAsFactors = F)
+  
+par(mfrow=c(1,3))
+ol <- intersect(rownames(old.results), rownames(leiden.res.t0.t10))
+plot(leiden.res.t0.t10[ol,]$log2FoldChange, old.results[ol,]$log2FoldChange_0.10_L,
+     xlab="DeSeq2 on filtered genes",
+     ylab="DeSeq previous results (PatternGenesOsloLeiden)",
+     main="t0 ~ t10",
+     xlim=c(-7, 7),
+     ylim=c(-7, 7))
+abline(a=0, b=1, col="red")
+
+ol <- intersect(rownames(old.results), rownames(leiden.res.t10.t30))
+plot(leiden.res.t10.t30[ol,]$log2FoldChange, old.results[ol,]$log2FoldChange_10.30_L,
+     xlab="DeSeq2 on filtered genes",
+     ylab="DeSeq previous results (PatternGenesOsloLeiden)",
+     main="t10 ~ t30",
+     xlim=c(-7, 7),
+     ylim=c(-7, 7))
+abline(a=0, b=1, col="red")
+
+ol <- intersect(rownames(old.results), rownames(leiden.res.t30.t180))
+plot(leiden.res.t30.t180[ol,]$log2FoldChange, old.results[ol,]$log2FoldChange_30.180_L,
+     xlab="DeSeq2 on filtered genes",
+     ylab="DeSeq previous results (PatternGenesOsloLeiden)",
+     main="t30 ~ t180",
+     xlim=c(-7, 7),
+     ylim=c(-7, 7))
+abline(a=0, b=1, col="red")
+```
+
+# DE locus plots
+```{r}
+library(ggsignif)
+de.t0.t180     <- read.csv("output/leiden_t0t180_raw.csv", stringsAsFactors = F, row.names=1)
+deseq.leiden   <- DESeqDataSetFromMatrix(countData=filtered.counts.leiden,
+                                     colData = meta.data[samples.leiden,],
+                                     design = ~ rnaseq_batch + sex + timepoint)
+
+norm           <- assay(vst(deseq.leiden))
+
+
+plot.de.effect <- function(gene.id, gene.name, ylim){
+  
+  d1 <- data.frame(Expression=norm[gene.id, ], 
+                 Timepoint=factor(meta.data[colnames(norm), "timepoint"], levels=c("t0", "t10", "t30", "t180")))
+  
+  theme.plain(ggplot(data=d1, aes(x=Timepoint, y=Expression, fill=Timepoint)) + 
+  geom_violin(col="white") +
+  geom_boxplot(width=0.2, col="lightgrey") +
+  ggtitle(gene.name) +
+  scale_fill_manual(values = timepoint_colors) + 
+  ylim(ylim)  +
+  geom_signif(comparisons=list(c("t0", "t180")),
+              tip_length=0.05,
+              y_position=ylim[2] - 0.5,
+              annotation=format(de.t0.t180[gene.id,]$padj, digits=3))) +
+  theme(legend.position = "none")
+}
+
+
+pdf(width=9, height=2.5, file="output/plots/IL18RAP_locus_genes.pdf", family = "ArialMT", paper="a4")
+p1 <- plot.de.effect("ENSG00000115607", "IL18RAP",c(2,14))
+p2 <- plot.de.effect("ENSG00000115602", "IL1RL1", c(2,14))
+p3 <- plot.de.effect("ENSG00000115604", "IL18R1", c(2,14))
+p3 <- plot.de.effect("ENSG00000150782", "IL18", c(2,14))
+
+grid.arrange(grobs=list(p2, p3, p1), ncol=3)
+dev.off()
+
+
+
+pdf(width=5, height=2.5, file="output/plots/TAGAP_locus_genes.pdf", family = "ArialMT", paper="a4")
+p1 <- plot.de.effect("ENSG00000164691", "TAGAP", c(4,16))
+p2 <- plot.de.effect("ENSG00000130363", "RSPH3", c(4,16))
+grid.arrange(grobs=list(p2, p1), ncol=2)
+dev.off()
+
+
+pdf(width=9, height=5, file="output/plots/IL21_locus_genes.pdf", family = "ArialMT", paper="a4")
+p1 <- plot.de.effect("ENSG00000138685", "FGF2", c(0,17))
+p2 <- plot.de.effect("ENSG00000138684", "IL21", c(0,17))
+p3 <- plot.de.effect("ENSG00000109471", "IL2", c(0,17))
+p4 <- plot.de.effect("ENSG00000224786", "CETN4P", c(0,17))
+p5 <- plot.de.effect("ENSG00000227145", "IL21-AS1", c(0,17))
+p6 <- plot.de.effect("ENSG00000145375", "SPATA5", c(0,17))
+grid.arrange(grobs=list(p1, p2, p3, p4, p5, p6), ncol=3)
+dev.off()
+
+
+pdf(width=2.5, height=2.5, file="output/plots/BACH2_locus_genes.pdf", family = "ArialMT", paper="a4")
+p1 <- plot.de.effect("ENSG00000112182", "BACH2", c(5, 15))
+grid.arrange(grobs=list(p1), ncol=1)
+dev.off()
+
+```
+
+
+
+# Scratchpad
+```{r}
+
+# Yang PC plot (fig 1c)
+pca <- prcomp(t(assay(normalized.counts[de.results$ensemblId,])))
+
+# Prep ggplot df
+df.plot <- as.data.frame(cbind(pca$x[,1], pca$x[,2]))
+  colnames(df.plot) <- c("PC1", "PC2")
+df.plot$timepoint <- meta.data[rownames(pca$x), "timepoint"]
+df.plot$sample <-   paste(meta.data[rownames(pca$x), "donor"], meta.data[rownames(pca$x), "clone"], sep="_")
+df.plot$donor <-   paste(meta.data[rownames(pca$x), "donor"])
+df.plot$PC2 <- -1* df.plot$PC2
+
+p1 <- theme.nature(ggplot(data=df.plot) +
+               geom_point(aes(x=timepoint, y=PC1, color=donor), size=3) +
+               geom_line(aes(x=timepoint, y=PC1, group=sample, color=donor)),
+             base_size = 16
+             ) + theme(legend.position = "none")
+
+p2 <- theme.nature(ggplot(data=df.plot) +
+               geom_point(aes(x=timepoint, y=PC2, color=donor), size=3) +
+               geom_line(aes(x=timepoint, y=PC2, group=sample, color=donor)),
+             base_size = 16
+             )
+
+grid.arrange(grobs=list(p1, p2), ncol=2,)
+
+pca.plot(pca, fill=meta.data[rownames(pca$x), "timepoint"], size=4) 
+
+```
+
+# Final supplemental table with cluster memberships
+```{r}
+
+tmp <- read.table("output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", sep="\t", stringsAsFactors = F, header=T)
+
+tmp2 <- read.table("output/final_results/cluster_memberships_kmeans_nclust6.tsv", sep="\t", stringsAsFactors = F)
+rownames(tmp2) <- tmp2[,1]
+
+
+tmp$geneName <- tmp2[tmp$ensemblId, 3]
+tmp$bioType <- tmp2[tmp$ensemblId, 4]
+tmp$clusterMembership <- tmp2[tmp$ensemblId, 2]
+
+order <- c("condition", "ensemblId","geneName", "bioType", "clusterMembership", "baseMean", "log2FoldChange", "lfcSE", 
+"stat", "pvalue", "padj", "fullyConcordant", "FDRInOslo", "o.baseMean", "o.log2FoldChange", "o.lfcSE", "o.stat", 
+"o.pvalue", "o.padj")
+
+
+
+write.table(tmp[,order], file="output/final_results/supplemental_table_1.tsv", quote=F, row.names = F, sep="\t")
+```
+

@@ -1,0 +1,61 @@
+```{r}
+library(ggplot2)
+source("../plotting_functions.r")
+
+dice.naive <- read.csv("data/CD4_NAIVE_TPM.csv")
+dice.stim <- read.csv("data/CD4_STIM_TPM-2.csv")
+
+rownames(dice.naive) <- gsub("(ENSG.*)\\..*", "\\1", dice.naive$Feature_name)
+rownames(dice.stim) <- gsub("(ENSG.*)\\..*", "\\1", dice.naive$Feature_name)
+
+annot  <- dice.naive[, 1:4]
+
+gsTcell.raw <- read.table("data/gsTcell_raw_rnaseq_counts_all_timepoints.tsv")
+biopsy.raw  <- read.table("data/expression_table.genelevel.v71.htseq.txt.table", row.names = 1, header=T)
+ol <- intersect(rownames(dice.naive), intersect(rownames(gsTcell.raw), rownames(biopsy.raw)))
+
+annot <- annot[ol,]
+
+dice.naive.tpm <- dice.naive[ol, 4:ncol(dice.naive)]
+dice.stim.tpm  <- dice.stim[ol, 4:ncol(dice.stim)]
+rm(dice.naive, dice.stim)
+
+# Make TPM
+gsTcell.tpm <- gsTcell.raw[ol,] / (annot[ol, ]$Transcript_Length.bp/1000)
+gsTcell.tpm <- t(t(gsTcell.tpm) / (colSums(gsTcell.tpm) / 1e6))
+
+biopsy.tpm <- biopsy.raw[ol,] / annot[ol, ]$Transcript_Length.bp.
+biopsy.tpm <- t( t(biopsy.tpm) * 1e6 / colSums(biopsy.tpm) )
+rm(gsTcell.raw, biopsy.raw)
+
+merged <- cbind(dice.naive.tpm, dice.stim.tpm, gsTcell.tpm, biopsy.tpm)
+merged <- cbind(gsTcell.tpm, biopsy.tpm)
+#rm(dice.naive.tpm, dice.stim.tpm, gsTcell.tpm, biopsy.tpm)
+
+# Remove genes that have more than X zeroes
+merged <- merged[rowMeans(dice.naive.tpm) > 1, ]
+merged[merged == 0] <- min(merged[merged != 0])
+merged <- log10(merged)
+
+
+#biopsy  #39B072
+#DICE #B07CD8
+#gsTcell #2EBCBB
+```
+
+# PCA
+```{r}
+dice.naive.tpm <- dice.naive.tpm[rowMeans(dice.naive.tpm) > 1, ]
+dice.naive.tpm[dice.naive.tpm == 0] <- min(dice.naive.tpm[dice.naive.tpm != 0])
+#dice.naive.tpm <- log10(dice.naive.tpm)
+
+pc <- prcomp(t(merged))
+
+p <- pca.plot(pc,
+              fill=c(rep("gsTcell", ncol(gsTcell.tpm)), rep("biopsy",ncol(biopsy.tpm))),
+              size=3) +
+  scale_color_manual(values=c(gsTcell="#2EBCBB", biopsy="#39B072"), name="Tissue")
+theme.plain(p)
+
+```
+

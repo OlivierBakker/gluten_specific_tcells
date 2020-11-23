@@ -1,0 +1,174 @@
+```{r}
+#library(devtools)
+#install_github("raguirreg/GREA")
+# https://github.com/raguirreg/GREA
+
+library(GREA)
+library(ggplot2)
+library(doParallel)
+library(reshape2)
+source("../plotting_functions.r")
+
+data("gene.info")
+
+de.genes <- read.table("../de_analysis/output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", stringsAsFactors = F, header=T)
+
+
+  de.genes.clustering <- read.table("../de_analysis/output/final_results/cluster_memberships_kmeans_nclust6.tsv", stringsAsFactors = F)
+#all.genes.leiden <- read.table("~/Documents/data/gs_tcells/de_genes/allDEgenes_Leiden.txt", stringsAsFactors = F, header=T)
+#all.genes.oslo <- read.table("~/Documents/data/gs_tcells/de_genes/allDEgenes_Oslo.txt", stringsAsFactors = F, header=T)
+
+
+# Determine all tested genes
+raw.counts                 <- read.table("../de_analysis/data/gsTcell_raw_rnaseq_counts_all_timepoints.tsv", header=T, row.names = 1)
+filtered.counts            <- raw.counts[rowSums(raw.counts > 1) > 20,]
+all.genes.ensembl <- rownames(filtered.counts)
+rm(list=c("raw.counts", "filtered.counts"))
+```
+
+# Determine binning of genes
+```{r}
+de.genes.ensembl       <- de.genes$ensemblId
+
+gene.info.chr          <- gene.info[which(gene.info$chr %in% c(1:22) == TRUE),]
+gene.info.chr.filtered <- gene.info.chr[which(as.character(gene.info.chr$gene_id) %in% all.genes.ensembl),]
+
+gene.binning.window    <- 125000
+gene.info.binned       <- GREA::bin.genes.genomic.regions(gene.pos = gene.info.chr.filtered, window = gene.binning.window)
+
+bin.nGenes             <- table(gene.info.binned$bin.tag)
+gene.info.binned$nGenes.in.bin <- as.numeric(bin.nGenes[as.character(gene.info.binned$bin.tag)])
+
+ggplot(gene.info.binned, aes(x=nGenes.in.bin)) +
+  geom_bar(stat="count", position = "dodge", alpha=0.8) +
+  theme_bw() +
+  theme(text=element_text(size=10, family="Helvetica"))
+```
+
+# Generate random genesets
+```{r}
+de_pma.sampled.gene.sets <-  GREA::get.sampled.genes(input.genes = de.genes.ensembl,
+                                               gene.info.binned = gene.info.binned,
+                                               binning.widow = 125000,
+                                               n.genes.sets = 10000, 
+                                               n.excess.genes.limit = 10,
+                                               parallel=FALSE, 
+                                               n.clusters = 5)
+```
+
+# Do enrichment test on all genes
+```{r}
+data("ib.traits.genes.list")
+
+de_pma.GREA <- GREA::GREA.test(query.gene.set = de.genes.ensembl, 
+                        sampled.genes.sets = de_pma.sampled.gene.sets, 
+                        genomic.region.gene.sets = ib.gw.traits.genes.list["CeD"], 
+                        plot = TRUE)
+
+save(de_pma.GREA, file="output/gwas_enrichments.Rdata")
+theme.plain(de_pma.GREA$null.dist.plot) 
+```
+
+
+```{r}
+load("output/plots/gwas_enrichment.pdf")
+
+# Plot
+summary <- de_pma.GREA$GREA.summary[de_pma.GREA$GREA.summary$trait == "CeD", ,drop=F]
+dataf    <- de_pma.GREA$null.dist.plot$data
+dataf    <- dataf[dataf$Var2 == "CeD",]
+
+p <- ggplot(dataf, aes(x=value)) +
+  geom_histogram(binwidth = max(dataf[,"value"]) /(length(unique(dataf$value)) + 12), 
+                 fill="darkgrey",
+                 color="white") + 
+  geom_vline(xintercept = summary[,"perc.per.gr"], lwd=1, colour="#254145") +
+  ggtitle(paste0("All DE genes N=3509")) + 
+  xlab("% overlappping GWAS genes") +
+  geom_text(aes(x=x, y=y, label=label),
+            data=data.frame(x=summary[,"perc.per.gr"],
+                            y=max(table(dataf[,"value"]))+50,
+                            label=paste0("p=",  format(summary[, "enrich.pvals"], scientific=F, digits = 2))),
+                hjust=-0.05, vjust=0, inherit.aes=F) +
+  ylim(c(0, max(table(dataf[,"value"]))+ 200))
+
+pdf(width=2.5, height=2.5,file="output/plots/gwas_enrichment.pdf", family = "ArialMT", paper="a4")
+theme.plain(p)
+dev.off()
+```
+
+# Enrichment test on subclusters
+```{r}
+data("ib.traits.genes.list")
+
+for (cluster in seq(5,6)) {
+  
+  current.geneset <- de.genes.clustering[de.genes.clustering$V2 == cluster, 1]
+  pdf(width=10, height = 7.5,
+      file=paste0("output/plots/gwas_enrichment_plot_nclust6_cluster_", cluster, ".pdf"))
+  de_pma.sampled.gene.sets <-  GREA::get.sampled.genes(input.genes = current.geneset,
+                                               gene.info.binned = gene.info.binned,
+                                               binning.widow = 125000,
+                                               n.genes.sets = 10000, 
+                                               n.excess.genes.limit = 10,
+                                               parallel=FALSE, 
+                                               n.clusters = 4)
+  de_pma.GREA <- GREA::GREA.test(query.gene.set = current.geneset, 
+                        sampled.genes.sets = de_pma.sampled.gene.sets, 
+                        genomic.region.gene.sets = ib.gw.traits.genes.list, 
+                        plot = TRUE)
+  
+  #save(de_pma.GREA, file=paste0("output/gwas_enrichments_nclust6_cluster_", cluster, ".Rdata"))
+  plot(de_pma.GREA$null.dist.plot)
+  dev.off()
+}
+
+```
+
+# Different plots
+```{r}
+de.genes.clustering <- read.table("../de_analysis/output/final_results/cluster_memberships_kmeans_nclust6.tsv", stringsAsFactors = F)
+
+new.cluster <- c(5,4,6,1,3,2)
+#new.cluster <- 1:6
+cols                      <- c("#3BB273", "#6B6174", "#EF6461", "#FABC2A", "#8576B6", "#2274A5")
+
+plots <- list()
+# Load clusters
+for (cluster in seq(1,6)) {
+  
+load(paste0("output/gwas_enrichments_nclust6_cluster_", cluster, ".Rdata"))
+summary <- de_pma.GREA$GREA.summary[de_pma.GREA$GREA.summary$trait == "CeD", ,drop=F]
+dataf    <- de_pma.GREA$null.dist.plot$data
+dataf    <- dataf[dataf$Var2 == "CeD",]
+
+current.geneset <- de.genes.clustering[de.genes.clustering$V2 == cluster, 1]
+p <- ggplot(dataf, aes(x=value)) +
+  geom_histogram(binwidth = max(dataf[,"value"]) /(length(unique(dataf$value))-0.5), 
+                 fill=cols[new.cluster[cluster]],
+                 color="white") + 
+  geom_vline(xintercept = summary[,"perc.per.gr"], lwd=1, colour="#254145") +
+  ggtitle(paste0("Cluster ", new.cluster[cluster], " N=", length(current.geneset))) + 
+  xlab("% overlappping GWAS genes") +
+  geom_text(aes(x=x, y=y, label=label),
+            data=data.frame(x=summary[,"perc.per.gr"],
+                            y=max(table(dataf[,"value"]))+50,
+                            label=paste0("p=",  format(summary[, "enrich.pvals"], scientific=F, digits = 2))),
+                hjust=-0.05, vjust=0, inherit.aes=F) +
+  ylim(c(0, max(table(dataf[,"value"]))+ 200))
+  
+#plot(de_pma.GREA$null.dist.plot)
+plots[[new.cluster[cluster]]] <- (theme.plain(p)  + theme(aspect.ratio=1))
+}
+
+
+pdf(width=12, height=5, file="output/plots/gwas_enrichment_per_cluster.pdf", family = "ArialMT", paper="a4")
+  grid.arrange(grobs=plots, ncol=3)
+dev.off()
+
+
+pdf(width=3, height=17, file="output/plots/gwas_enrichment_per_cluster_vertical.pdf", family = "ArialMT")
+grid.arrange(grobs=plots, nrow=6)
+dev.off()
+```
+

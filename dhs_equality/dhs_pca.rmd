@@ -1,0 +1,110 @@
+```{r}
+library(GenomicRanges)
+source("../plotting_functions.r")
+
+timepoint_colors <-  scale_color_manual(values=c(t0="#0C885C",
+                                                 t10="#CBC012",
+                                                 t30="#501589",
+                                                 t180="#CB4E12"))
+
+rpkm                  <- read.table("output/dhs_consensus_counts_rpkm.tsv", header=T, row.names=1, sep="\t")
+samplesheet           <- read.table("data/de_peakcalling_samplesheet.tsv", header=T, sep="\t")
+rownames(samplesheet) <- samplesheet$SampleID
+samplesheet$Clone     <- gsub("(.*\\_\\d)\\_.*", "\\1", samplesheet$SampleID)
+
+
+de.genes                   <- read.table("../de_analysis/output/final_results/gs_tcells_deseq2_batch_and_gender_corrected_leiden_fdr_005_replication_olso.tsv", header=T, stringsAsFactors = F)[,4]
+
+# Ensembl data, use to get read names
+ensembl                    <- read.table("~/Documents/data/reference/ensembl/ensembl_gene_position_b37_v100.txt.txt", sep="\t", header=T, stringsAsFactors = F)
+ensembl                    <- ensembl[!duplicated(ensembl$Gene.stable.ID),]
+rownames(ensembl)          <- ensembl$Gene.stable.ID
+
+
+# Define window arround genes of 5kb
+genes <- GRanges(seqnames=ensembl[unique(de.genes),"Chromosome.scaffold.name"],
+                 ranges=IRanges(start=ensembl[unique(de.genes),"Gene.start..bp."] - 5000,
+                                end=ensembl[unique(de.genes),"Gene.end..bp."] + 5000))
+
+# Convert DHS sites to genomic ranges
+dhs.tmp   <- matrix(unlist(strsplit(rownames(rpkm), ":")), ncol=2, byrow=T)
+dhs.tmp2  <- matrix(unlist(strsplit(dhs.tmp[,2], "-")), ncol=2, byrow=T)
+dhs.sites <- GRanges(seqnames=gsub("chr", "", dhs.tmp[,1]),
+                     ranges=IRanges(start=as.numeric(dhs.tmp2[,1]),
+                                    end=as.numeric(dhs.tmp2[,2])))
+rm(dhs.tmp, dhs.tmp2)
+```
+
+# PCA
+```{r}
+pca <- prcomp(t((log10(rpkm))))
+
+pdf(width=4, height=3, file="output/plots/pca_dhs_timepoint.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot(pca, fill=factor(samplesheet$Condition, levels=c("t0", "t10", "t30", "t180")),
+                     size=4,
+                     alpha=0.75) + 
+  timepoint_colors +
+  labs(color="Timepoint")
+theme.plain(p)
+dev.off()
+
+
+pdf(width=4, height=3, file="output/plots/pca_dhs_clone.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot(pca, fill=samplesheet$Clone,
+                     size=4,
+                     alpha=0.75) + 
+  labs(color="clone")
+theme.plain(p)
+dev.off()
+
+pdf(width=4.5, height=3.4, file="output/plots/pca_dhs_both.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot(pca,
+               color=samplesheet$Clone,
+               fill=samplesheet$Clone,
+               shape=factor(samplesheet$Condition, levels=c("t0", "t10", "t30", "t180")),
+               size=4,
+               alpha=0.75) + 
+  labs(color="Clone", shape="Timepoint") +
+  scale_shape_manual(values=c("t0"=21, "t10"=22, "t30"=23, "t180"=24)) +
+  guides(size="legend", fill="none")
+theme.plain(p)
+dev.off()
+
+
+
+rpkm2 <- rpkm[order(apply(rpkm, 1, function(a){sum(a)}), decreasing = T)[1:5000], ]
+pca2 <- prcomp(t((log10(rpkm2))))
+
+pdf(width=4, height=3, file="output/plots/pca_dhs_top_5000_sites_timepoint.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot(pca2, fill=factor(samplesheet$Condition, levels=c("t0", "t10", "t30", "t180")),
+                     size=4,
+                     alpha=0.75) + 
+  timepoint_colors +
+  labs(color="Timepoint")
+theme.plain(p)
+dev.off()
+
+```
+
+# PCA of DE genes
+```{r}
+dhs.ol.genes  <- findOverlaps(dhs.sites, genes)
+rpkm.de.genes <- rpkm[dhs.ol.genes@from, ]
+pca           <- prcomp(t((log10(rpkm.de.genes))))
+
+
+pdf(width=4.5, height=3.4, file="output/plots/pca_dhs_both_5kb_arround_de_genes.pdf", family = "ArialMT", paper="a4")
+p  <- pca.plot(pca,
+               color=samplesheet$Clone,
+               fill=samplesheet$Clone,
+               shape=factor(samplesheet$Condition, levels=c("t0", "t10", "t30", "t180")),
+               size=4,
+               alpha=0.75) + 
+  labs(color="Clone", shape="Timepoint") +
+  scale_shape_manual(values=c("t0"=21, "t10"=22, "t30"=23, "t180"=24)) +
+  guides(size="legend", fill="none")
+theme.plain(p)
+dev.off()
+
+```
+
