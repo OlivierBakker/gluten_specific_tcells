@@ -151,6 +151,65 @@ boxplot(ks, ylab="WSS (distance to cluster center) 100 runs", xlab="cluster numb
 dev.off()
 
 
+k <- 6
+nrun <-100
+wss  <- c()
+outs <- matrix(nrow=nrow(standardized.rmeans), ncol=0)
+centers  <- 
+for (i in rep(k, nrun)) {
+  #clustering <- timeclust(rmeans, algo="km", k=i, standardize =T)
+  clustering <- kmeans(standardized.rmeans, centers=k, iter.max = 100)
+  #s          <- silhouette(x=clustering$cluster, dist=d)
+  #dunn.idx   <- dunn(distance = as.matrix(d), clusters=clustering@cluster)
+  #outs <- c(outs, mean(s[,"sil_width"]))
+  #outs       <- c(outs, dunn.idx)
+  wss        <- c(wss, clustering$withinss)
+  outs       <- cbind(outs, clustering$cluster[rownames(standardized.rmeans)])
+}
+
+
+clusters10 <- read.table("output/final_results/cluster_memberships_kmeans_nclust6.tsv", stringsAsFactors = F, header=F, sep="\t", row.names=1)
+
+# Thanks Aaron :)
+names(clusters10)  <- c("Cluster", "SYMBOL", "Function")
+clusters10$Cluster <- as.character(clusters10$Cluster)
+
+# reassigning the true cluster number based on discussion with Iris and Olivier
+clusters10$Cluster <- paste(clusters10$Cluster, "A", sep = "")
+clusters10$Cluster <- gsub("4A","1", clusters10$Cluster)
+clusters10$Cluster <- gsub("6A","2", clusters10$Cluster)
+clusters10$Cluster <- gsub("5A","3", clusters10$Cluster)
+clusters10$Cluster <- gsub("2A","4", clusters10$Cluster)
+clusters10$Cluster <- gsub("1A","5", clusters10$Cluster)
+clusters10$Cluster <- gsub("3A","6", clusters10$Cluster)
+
+# Re assign cluster numbers to their most prevelant type
+df.plot <- apply(outs, 2, function(x) {
+  tmp    <- table(x)
+  lookup <- names(tmp)[order(tmp, decreasing = T)]
+  bla <- 1:6
+  names(bla) <- lookup
+
+  as.numeric(bla[as.character(x)])
+})
+
+rownames(df.plot) <- rownames(outs)
+
+pdf(width=5, height=5, file="output/plots/clustering_stabillity_heatmap.pdf")
+pheatmap(df.plot,
+         color = brewer.pal(6, "RdBu"),
+         annotation_row = clusters10[,"Cluster", drop=F],
+         annotation_colors = list(Cluster=c(`1`="#3BB273",
+                                            `2`="#6B6174",
+                                            `3`="#EF6461",
+                                            `4`="#FABC2A",
+                                            `5`="#8576B6",
+                                            `6`="#2274A5")),
+         cluster_cols = T,
+         show_rownames = FALSE)
+
+dev.off()
+
 ```
 
 # Final cluster plot based on finalized cluster defnitions
